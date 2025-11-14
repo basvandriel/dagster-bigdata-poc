@@ -23,7 +23,11 @@ from dagster import (
     sensor,
 )
 
-from stream_bam import BamStats, calculate_total_chunks, format_progress
+from dagster_bigdata_poc.components.stream_bam import (
+    BamStats,
+    calculate_total_chunks,
+    format_progress,
+)
 
 
 def serialize_reads(reads: List[pysam.AlignedSegment]) -> List[dict]:
