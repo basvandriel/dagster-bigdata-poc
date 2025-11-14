@@ -103,8 +103,10 @@ class StreamingBamChunkStreamer(dagster.Model, dagster.Resolvable):
             # Get statistics to calculate total chunks
             stats = BamStats.from_url(bam_file_path)
             total_chunks = calculate_total_chunks(stats.total_reads, self.chunk_size)
-            
-            context.log.info(f"📊 BAM stats: {stats.total_reads:,} reads, {stats.num_references} references")
+
+            context.log.info(
+                f"📊 BAM stats: {stats.total_reads:,} reads, {stats.num_references} references"
+            )
             context.log.info(f"📦 Total chunks: {total_chunks}")
 
             chunk_count = 0

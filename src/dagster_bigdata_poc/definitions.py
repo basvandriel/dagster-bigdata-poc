@@ -1,17 +1,14 @@
 from dagster import definitions, Definitions, job
 from dagster.components.core.component_tree import ComponentTree
 
-from .components.bam_chunk_processor import BamChunkProcessor
-from .components.bam_chunk_streamer import BamChunkStreamer
-from .components.bam_file_sensor import BamFileSensor
 from .components.streaming_bam_chunk_streamer import StreamingBamChunkStreamer
 from .components.streaming_bam_chunk_processor import StreamingBamChunkProcessor
 from .components.streaming_bam_file_sensor import (
     BamFileSensor as StreamingBamFileSensor,
 )
 
-
-# This is great, but we can allow much better typing if we have one orchestrator I believe.
+# TODO allow for better typing
+# The streaming bam chunk processor should only work with streaming bam chunks
 
 
 @definitions
@@ -21,6 +18,7 @@ def defs():
     # Create streaming components that depend on each other
     streaming_streamer = StreamingBamChunkStreamer()
     streaming_processor = StreamingBamChunkProcessor()
+
     streaming_sensor = StreamingBamFileSensor(
         name="streaming_bam_sensor",
         bam_urls=[

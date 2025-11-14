@@ -62,9 +62,9 @@ class StreamingBamChunkProcessor(dagster.Model, dagster.Resolvable):
                     return {k: serialize_for_json(v) for k, v in obj.items()}
                 elif isinstance(obj, list):
                     return [serialize_for_json(item) for item in obj]
-                elif hasattr(obj, 'tolist'):  # numpy array
+                elif hasattr(obj, "tolist"):  # numpy array
                     return obj.tolist()
-                elif hasattr(obj, 'item'):  # numpy scalar
+                elif hasattr(obj, "item"):  # numpy scalar
                     return obj.item()
                 else:
                     return obj
