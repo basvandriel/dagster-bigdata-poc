@@ -112,20 +112,3 @@ def stream_bam_chunks(
         print(f"Total reads processed: {reads_processed}")
         print(f"Total time: {total_time:.2f} seconds")
         print(f"Average rate: {avg_rate:.0f} reads/second")
-
-
-def main():
-    """Example usage of BAM streaming."""
-    print("Starting BAM streaming example...")
-
-    total_chunks = 0
-    for chunk in stream_bam_chunks(BAM_URL):
-        total_chunks += 1
-        # Process chunk here - in a real application you'd do something with the reads
-        pass
-
-    print(f"\nExample complete! Processed {total_chunks} chunks total")
-
-
-if __name__ == "__main__":
-    main()

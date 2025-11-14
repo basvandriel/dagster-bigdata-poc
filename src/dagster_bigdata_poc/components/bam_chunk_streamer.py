@@ -15,6 +15,7 @@ from .stream_bam import (
     BamStats,
     calculate_total_chunks,
     format_progress,
+    stream_bam_chunks,
 )
 
 from .types import BamChunk
@@ -68,8 +69,7 @@ class BamChunkStreamer(dagster.Model, dagster.Resolvable):
             """
             Asset that streams BAM file in chunks and returns all chunks as a list.
 
-            While not as memory-efficient as dynamic outputs, this allows for
-            asset-based composition where other components can consume the chunks.
+            Uses the shared streaming function to avoid code duplication.
             """
             bam_url = self.bam_url
             chunk_size = self.chunk_size
@@ -87,77 +87,43 @@ class BamChunkStreamer(dagster.Model, dagster.Resolvable):
                 f"Total reads: {stats.total_reads:,} | Total chunks: {total_chunks:,}"
             )
 
-            # Open file for streaming
-            samfile = pysam.AlignmentFile(bam_url, "rb")
+            # Stream chunks using shared function and convert to BamChunk objects
+            chunks = []
             start_time = time.time()
 
-            chunks = []
-            chunk = []
-            chunk_count = 0
-            reads_processed = 0
+            for chunk_num, chunk_reads in enumerate(
+                stream_bam_chunks(bam_url, chunk_size), 1
+            ):
+                # Convert pysam objects to serializable BamChunk
+                bam_chunk = BamChunk(
+                    chunk_id=chunk_num,
+                    total_chunks=total_chunks,
+                    reads=serialize_reads(chunk_reads),
+                    bam_url=bam_url,
+                )
+                chunks.append(bam_chunk)
 
-            try:
-                for read in samfile:
-                    chunk.append(read)
-                    reads_processed += 1
+                # Log progress
+                elapsed_time = time.time() - start_time
+                reads_processed = chunk_num * chunk_size
+                rate = reads_processed / elapsed_time if elapsed_time > 0 else 0
 
-                    if len(chunk) >= chunk_size:
-                        chunk_count += 1
-                        elapsed_time = time.time() - start_time
-                        rate = reads_processed / elapsed_time if elapsed_time > 0 else 0
+                progress_msg = format_progress(
+                    chunk_num, total_chunks, reads_processed, rate
+                )
+                context.log.info(progress_msg)
 
-                        progress_msg = format_progress(
-                            chunk_count, total_chunks, reads_processed, rate
-                        )
-                        context.log.info(progress_msg)
+            # Final summary
+            total_time = time.time() - start_time
+            total_reads = len(chunks) * chunk_size
+            avg_rate = total_reads / total_time if total_time > 0 else 0
 
-                        # Create chunk and add to list
-                        bam_chunk = BamChunk(
-                            chunk_id=chunk_count,
-                            total_chunks=total_chunks,
-                            reads=serialize_reads(
-                                chunk
-                            ),  # Convert to serializable format
-                            bam_url=bam_url,
-                        )
-                        chunks.append(bam_chunk)
-                        chunk = []
-
-                # Handle final partial chunk
-                if chunk:
-                    chunk_count += 1
-                    elapsed_time = time.time() - start_time
-                    rate = reads_processed / elapsed_time if elapsed_time > 0 else 0
-
-                    progress_msg = (
-                        format_progress(
-                            chunk_count, total_chunks, reads_processed, rate
-                        )
-                        + " (FINAL)"
-                    )
-                    context.log.info(progress_msg)
-
-                    bam_chunk = BamChunk(
-                        chunk_id=chunk_count,
-                        total_chunks=total_chunks,
-                        reads=serialize_reads(chunk),  # Convert to serializable format
-                        bam_url=bam_url,
-                    )
-                    chunks.append(bam_chunk)
-
-            finally:
-                samfile.close()
-
-                # Final summary
-                total_time = time.time() - start_time
-                avg_rate = reads_processed / total_time if total_time > 0 else 0
-
-                context.log.info("=" * 70)
-                context.log.info("Streaming complete!")
-                context.log.info(f"Total chunks processed: {chunk_count}")
-                context.log.info(f"Total reads processed: {reads_processed}")
-                context.log.info(f"Total time: {total_time:.2f} seconds")
-                context.log.info(f"Average rate: {avg_rate:.0f} reads/second")
+            context.log.info("=" * 70)
+            context.log.info("Streaming complete!")
+            context.log.info(f"Total chunks processed: {len(chunks)}")
+            context.log.info(f"Total reads processed: {total_reads}")
+            context.log.info(f"Total time: {total_time:.2f} seconds")
+            context.log.info(f"Average rate: {avg_rate:.0f} reads/second")
 
             return chunks
 
