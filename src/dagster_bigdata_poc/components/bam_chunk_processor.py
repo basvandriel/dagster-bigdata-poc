@@ -4,11 +4,13 @@ BAM Chunk Processor Component
 A simple component that processes BAM chunks and saves results to JSON files.
 """
 
+import array
 import json
 from pathlib import Path
 from typing import List
 
 import dagster
+import numpy as np
 from dagster import AssetExecutionContext, AssetIn, asset
 
 from .types import BamChunk
@@ -66,28 +68,47 @@ class BamChunkProcessor(dagster.Model, dagster.Resolvable):
                 )
 
                 # Create chunk data structure
+                # Reads are already serialized by the streamer, just use them directly
                 chunk_data = {
+                    "chunk_id": bam_chunk.chunk_id,
                     "metadata": {
-                        "chunk_id": bam_chunk.chunk_id,
-                        "total_chunks": bam_chunk.total_chunks,
-                        "bam_url": bam_chunk.bam_url,
-                        "processor": self.name,
-                    },
-                    "statistics": {
                         "total_reads": len(bam_chunk.reads),
-                        "mapped_reads": mapped_count,
-                        "unmapped_reads": unmapped_count,
+                        "mapped_count": mapped_count,
+                        "unmapped_count": unmapped_count,
                         "avg_read_length": round(avg_read_length, 1),
                     },
-                    "reads": bam_chunk.reads,  # Full read data
+                    "reads": bam_chunk.reads,  # Reads are already serialized dictionaries
                 }
 
                 # Save to JSON file
                 filename = f"chunk_{bam_chunk.chunk_id:04d}.json"
                 filepath = output_dir / filename
 
+                def numpy_encoder(obj):
+                    """Custom JSON encoder for numpy types and array.array."""
+                    if isinstance(obj, np.ndarray):
+                        return obj.tolist()
+                    elif isinstance(
+                        obj, (np.integer, np.int64, np.int32, np.int16, np.int8)
+                    ):
+                        return int(obj)
+                    elif isinstance(
+                        obj, (np.floating, np.float64, np.float32, np.float16)
+                    ):
+                        return float(obj)
+                    elif isinstance(obj, np.bool_):
+                        return bool(obj)
+                    elif isinstance(obj, np.str_):
+                        return str(obj)
+                    elif isinstance(obj, array.array):
+                        return list(obj)
+                    else:
+                        raise TypeError(
+                            f"Object of type {obj.__class__.__name__} is not JSON serializable"
+                        )
+
                 with open(filepath, "w") as f:
-                    json.dump(chunk_data, f, indent=2)
+                    json.dump(chunk_data, f, indent=2, default=numpy_encoder)
 
                 context.log.info(f"✓ Saved chunk {bam_chunk.chunk_id} to {filepath}")
                 context.log.info(

@@ -203,3 +203,4 @@ __marimo__/
 .streamlit/secrets.toml
 HG00096.chrom20.ILLUMINA.bwa.GBR.low_coverage.20120522.bam.bai
 .DS_Store
+output

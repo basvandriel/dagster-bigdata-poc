@@ -1,9 +1,14 @@
-from dagster import definitions, Definitions
+from dagster import definitions, Definitions, job
 from dagster.components.core.component_tree import ComponentTree
 
 from .components.bam_chunk_processor import BamChunkProcessor
 from .components.bam_chunk_streamer import BamChunkStreamer
 from .components.bam_file_sensor import BamFileSensor
+from .components.streaming_bam_chunk_streamer import StreamingBamChunkStreamer
+from .components.streaming_bam_chunk_processor import StreamingBamChunkProcessor
+from .components.streaming_bam_file_sensor import (
+    BamFileSensor as StreamingBamFileSensor,
+)
 
 
 # This is great, but we can allow much better typing if we have one orchestrator I believe.
@@ -11,31 +16,29 @@ from .components.bam_file_sensor import BamFileSensor
 
 @definitions
 def defs():
-    # Create multiple BAM ingestion pipelines with unique names
-    pipelines = []
-
-    hg00096_streamer = BamChunkStreamer(
-        name="hg00096",
-        bam_url="https://s3.amazonaws.com/1000genomes/phase3/data/HG00096/alignment/HG00096.chrom20.ILLUMINA.bwa.GBR.low_coverage.20120522.bam",
-        chunk_size=1000,
-    )
-    hg00096_processor = BamChunkProcessor(
-        name="hg00096",
-    )
-    pipelines.extend([hg00096_streamer, hg00096_processor])
-
-    # Create sensors for each pipeline
-    sensors = []
-    hg00096_sensor = BamFileSensor(
-        name="hg00096",  # Must match the streamer name
-        bam_url="https://s3.amazonaws.com/1000genomes/phase3/data/HG00096/alignment/HG00096.chrom20.ILLUMINA.bwa.GBR.low_coverage.20120522.bam",
-        minimum_interval_seconds=60,
-    )
-    sensors.append(hg00096_sensor)
-
-    # Build definitions from all components
     context = ComponentTree.for_test().load_context
-    return Definitions(
-        assets=[component.build_defs(context) for component in pipelines],
-        sensors=[sensor.build_defs(context) for sensor in sensors],
+
+    # Create streaming components that depend on each other
+    streaming_streamer = StreamingBamChunkStreamer()
+    streaming_processor = StreamingBamChunkProcessor()
+    streaming_sensor = StreamingBamFileSensor(
+        name="streaming_bam_sensor",
+        bam_urls=[
+            "https://s3.amazonaws.com/1000genomes/phase3/data/HG00096/alignment/HG00096.chrom20.ILLUMINA.bwa.GBR.low_coverage.20120522.bam"
+        ],
+        job_name="streaming_bam_job",
     )
+
+    # Get the ops from the components
+    stream_op = streaming_streamer.build_defs(context)
+    process_op = streaming_processor.build_defs(context)
+    sensor_def = streaming_sensor.build_defs(context)
+
+    # Create the streaming job by composing the ops directly
+    @job(name="streaming_bam_job")
+    def streaming_bam_job(bam_url: str):
+        """Job that streams and processes BAM chunks without orchestration layer."""
+        # Connect streamer output to processor input using map
+        stream_op(bam_url).map(process_op)
+
+    return Definitions(sensors=[sensor_def], jobs=[streaming_bam_job])

@@ -8,6 +8,7 @@ import time
 from typing import List
 
 import dagster
+import numpy as np
 import pysam
 from dagster import AssetExecutionContext, asset
 
@@ -27,23 +28,41 @@ def serialize_reads(reads: List[pysam.AlignedSegment]) -> List[dict]:
 
     Only extracts the essential read information needed for processing.
     """
+
+    def to_python_types(obj):
+        """Recursively convert numpy types to Python types."""
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, (np.integer, np.int64, np.int32)):
+            return int(obj)
+        elif isinstance(obj, (np.floating, np.float64, np.float32)):
+            return float(obj)
+        elif isinstance(obj, np.bool_):
+            return bool(obj)
+        elif isinstance(obj, dict):
+            return {k: to_python_types(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [to_python_types(item) for item in obj]
+        else:
+            return obj
+
     serialized = []
     for read in reads:
-        serialized.append(
-            {
-                "query_name": read.query_name,
-                "flag": read.flag,
-                "reference_id": read.reference_id,
-                "reference_start": read.reference_start,
-                "mapping_quality": read.mapping_quality,
-                "cigarstring": read.cigarstring,
-                "next_reference_id": read.next_reference_id,
-                "next_reference_start": read.next_reference_start,
-                "template_length": read.template_length,
-                "query_sequence": read.query_sequence,
-                "query_qualities": read.query_qualities,
-            }
-        )
+        read_dict = {
+            "query_name": read.query_name,
+            "flag": read.flag,
+            "reference_id": read.reference_id,
+            "reference_start": read.reference_start,
+            "mapping_quality": read.mapping_quality,
+            "cigarstring": read.cigarstring,
+            "next_reference_id": read.next_reference_id,
+            "next_reference_start": read.next_reference_start,
+            "template_length": read.template_length,
+            "query_sequence": read.query_sequence,
+            "query_qualities": read.query_qualities,
+        }
+        # Apply recursive conversion to handle all numpy types
+        serialized.append(to_python_types(read_dict))
     return serialized
 
 
@@ -69,7 +88,9 @@ class BamChunkStreamer(dagster.Model, dagster.Resolvable):
             """
             Asset that streams BAM file in chunks and returns all chunks as a list.
 
-            Uses the shared streaming function to avoid code duplication.
+            Note: For very large BAM files, consider using ops with dynamic outputs instead.
+            The underlying stream_bam_chunks function IS memory-efficient, but this asset
+            buffers results for Dagster's asset dependency system.
             """
             bam_url = self.bam_url
             chunk_size = self.chunk_size
@@ -95,7 +116,7 @@ class BamChunkStreamer(dagster.Model, dagster.Resolvable):
                 stream_bam_chunks(bam_url, chunk_size), 1
             ):
                 # Convert pysam objects to serializable BamChunk
-                bam_chunk = BamChunk(
+                bam_chunk = BaokmChunk(
                     chunk_id=chunk_num,
                     total_chunks=total_chunks,
                     reads=serialize_reads(chunk_reads),
@@ -124,6 +145,9 @@ class BamChunkStreamer(dagster.Model, dagster.Resolvable):
             context.log.info(f"Total reads processed: {total_reads}")
             context.log.info(f"Total time: {total_time:.2f} seconds")
             context.log.info(f"Average rate: {avg_rate:.0f} reads/second")
+            context.log.info(
+                "⚠️  Note: All chunks buffered in memory. For very large files, consider ops with dynamic outputs."
+            )
 
             return chunks
 
