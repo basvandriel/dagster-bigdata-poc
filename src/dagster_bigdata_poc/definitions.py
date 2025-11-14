@@ -21,7 +21,6 @@ def defs():
     )
     hg00096_processor = BamChunkProcessor(
         name="hg00096",
-        persistence_backend="logging",  # Could be "neo4j" or "mysql"
     )
     pipelines.extend([hg00096_streamer, hg00096_processor])
 
