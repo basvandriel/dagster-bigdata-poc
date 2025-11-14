@@ -20,21 +20,22 @@ class BamFileSensor(dagster.Model, dagster.Resolvable):
     or check multiple sources for available files.
     """
 
+    name: str  # Unique identifier matching the streamer name
     bam_url: str
     minimum_interval_seconds: int = 60
 
     def build_defs(self, context):
         @sensor(
-            job_name="bam_processing_job",
+            name=f"{self.name}_bam_file_sensor",  # Unique sensor name per pipeline
+            asset_selection=[f"{self.name}_chunks"],  # Target the specific chunks asset
             minimum_interval_seconds=self.minimum_interval_seconds,
         )
         def bam_file_sensor(context: SensorEvaluationContext) -> Iterator[RunRequest]:
             """
-            Sensor that detects when the BAM file is available.
+            Sensor that detects when the BAM file is available and triggers asset materialization.
 
-            Can be triggered manually via Dagster UI or CLI.
-            In a real scenario, this could check multiple URLs or a database
-            for available BAM files.
+            Triggers materialization of the specific chunks asset when a BAM file becomes available.
+            In a real scenario, this could check multiple URLs or a database for available BAM files.
             """
             try:
                 # Quick check if the BAM file is accessible by getting stats
@@ -44,19 +45,12 @@ class BamFileSensor(dagster.Model, dagster.Resolvable):
                 context.log.info(f"Total reads: {stats.total_reads:,}")
                 context.log.info(f"References: {stats.num_references}")
 
-                # Yield a run request with the BAM URL as config
+                # Yield a run request to materialize the specific chunks asset
                 yield RunRequest(
-                    run_config={
-                        "ops": {
-                            "load_bam_chunks": {
-                                "config": {
-                                    "bam_url": self.bam_url,
-                                    "chunk_size": 1000,
-                                }
-                            }
-                        }
-                    },
-                    tags={"bam_url": self.bam_url},
+                    asset_selection=[
+                        f"{self.name}_chunks"
+                    ],  # Target the specific chunks asset
+                    tags={"bam_url": self.bam_url, "pipeline": self.name},
                 )
 
             except Exception as e:

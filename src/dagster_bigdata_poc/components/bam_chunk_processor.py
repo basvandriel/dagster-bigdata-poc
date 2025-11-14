@@ -6,10 +6,10 @@ A configurable component that processes BAM chunks and persists results to vario
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import dagster
-from dagster import OpExecutionContext, op
+from dagster import AssetExecutionContext, AssetIn, asset
 
 from .types import BamChunk
 
@@ -190,6 +190,7 @@ class BamChunkProcessor(dagster.Model, dagster.Resolvable):
     Supports multiple persistence strategies: logging, Neo4j, MySQL, etc.
     """
 
+    name: str  # Unique identifier for this processor instance
     persistence_backend: str = "logging"  # Options: logging, neo4j, mysql
     neo4j_uri: Optional[str] = None
     neo4j_user: Optional[str] = None
@@ -229,67 +230,86 @@ class BamChunkProcessor(dagster.Model, dagster.Resolvable):
     def build_defs(self, context):
         backend = self._create_backend()
 
-        @op
-        def process_bam_chunk(context: OpExecutionContext, bam_chunk: BamChunk) -> dict:
+        @asset(
+            name=f"{self.name}_processed_chunks",  # Unique asset name based on instance
+            ins={
+                "chunks": AssetIn(f"{self.name}_chunks")
+            },  # Reference the corresponding chunks asset
+            compute_kind="bam_processing",
+            description=f"Processes BAM chunks and persists to {self.persistence_backend} for {self.name}",
+        )
+        def process_bam_chunk(
+            context: AssetExecutionContext, chunks: List[BamChunk]
+        ) -> List[dict]:
             """
-            Process operation that handles individual BAM chunks and persists results.
+            Asset that processes individual BAM chunks and persists results.
 
+            Consumes chunks from the streamer asset and produces processed statistics.
             The processing logic is configurable based on the persistence backend.
             """
-            context.log.info(
-                f"Processing chunk {bam_chunk.chunk_id}/{bam_chunk.total_chunks} with {self.persistence_backend} backend"
-            )
-            context.log.info(f"Chunk contains {len(bam_chunk.reads)} reads")
+            results = []
 
-            # Calculate statistics
-            mapped_count = sum(1 for read in bam_chunk.reads if not (read["flag"] & 4))
-            unmapped_count = len(bam_chunk.reads) - mapped_count
-
-            total_bases = sum(
-                len(read["query_sequence"])
-                for read in bam_chunk.reads
-                if read.get("query_sequence")
-            )
-            avg_read_length = (
-                total_bases / len(bam_chunk.reads) if bam_chunk.reads else 0
-            )
-
-            stats = {
-                "chunk_id": bam_chunk.chunk_id,
-                "total_chunks": bam_chunk.total_chunks,
-                "reads_in_chunk": len(bam_chunk.reads),
-                "mapped_reads": mapped_count,
-                "unmapped_reads": unmapped_count,
-                "avg_read_length": round(avg_read_length, 1),
-                "bam_url": bam_chunk.bam_url,
-            }
-
-            # Persist statistics
-            try:
-                backend.persist_chunk_stats(stats)
+            for bam_chunk in chunks:
                 context.log.info(
-                    f"✓ Chunk {bam_chunk.chunk_id} statistics persisted to {self.persistence_backend}"
+                    f"Processing chunk {bam_chunk.chunk_id}/{bam_chunk.total_chunks} with {self.persistence_backend} backend"
                 )
-            except Exception as e:
-                context.log.error(f"✗ Failed to persist chunk statistics: {e}")
-                raise
+                context.log.info(f"Chunk contains {len(bam_chunk.reads)} reads")
 
-            # Optionally persist individual read data (can be expensive for large datasets)
-            if self.persistence_backend != "logging":  # Skip for logging to avoid spam
+                # Calculate statistics
+                mapped_count = sum(
+                    1 for read in bam_chunk.reads if not (read["flag"] & 4)
+                )
+                unmapped_count = len(bam_chunk.reads) - mapped_count
+
+                total_bases = sum(
+                    len(read["query_sequence"])
+                    for read in bam_chunk.reads
+                    if read.get("query_sequence")
+                )
+                avg_read_length = (
+                    total_bases / len(bam_chunk.reads) if bam_chunk.reads else 0
+                )
+
+                stats = {
+                    "chunk_id": bam_chunk.chunk_id,
+                    "total_chunks": bam_chunk.total_chunks,
+                    "reads_in_chunk": len(bam_chunk.reads),
+                    "mapped_reads": mapped_count,
+                    "unmapped_reads": unmapped_count,
+                    "avg_read_length": round(avg_read_length, 1),
+                    "bam_url": bam_chunk.bam_url,
+                }
+
+                # Persist statistics
                 try:
-                    backend.persist_read_data(bam_chunk)
+                    backend.persist_chunk_stats(stats)
                     context.log.info(
-                        f"✓ Chunk {bam_chunk.chunk_id} read data persisted to {self.persistence_backend}"
+                        f"✓ Chunk {bam_chunk.chunk_id} statistics persisted to {self.persistence_backend}"
                     )
                 except Exception as e:
-                    context.log.error(f"✗ Failed to persist read data: {e}")
+                    context.log.error(f"✗ Failed to persist chunk statistics: {e}")
                     raise
 
-            context.log.info(
-                f"Chunk {bam_chunk.chunk_id} processed: {mapped_count} mapped, {unmapped_count} unmapped reads"
-            )
-            context.log.info(f"Average read length: {avg_read_length:.1f} bases")
+                # Optionally persist individual read data (can be expensive for large datasets)
+                if (
+                    self.persistence_backend != "logging"
+                ):  # Skip for logging to avoid spam
+                    try:
+                        backend.persist_read_data(bam_chunk)
+                        context.log.info(
+                            f"✓ Chunk {bam_chunk.chunk_id} read data persisted to {self.persistence_backend}"
+                        )
+                    except Exception as e:
+                        context.log.error(f"✗ Failed to persist read data: {e}")
+                        raise
 
-            return stats
+                context.log.info(
+                    f"Chunk {bam_chunk.chunk_id} processed: {mapped_count} mapped, {unmapped_count} unmapped reads"
+                )
+                context.log.info(f"Average read length: {avg_read_length:.1f} bases")
+
+                results.append(stats)
+
+            return results
 
         return process_bam_chunk

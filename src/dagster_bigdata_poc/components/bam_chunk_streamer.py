@@ -1,15 +1,15 @@
 """
 BAM Chunk Streamer Component
 
-A reusable op component that streams BAM files in chunks without loading into memory.
+A reusable asset component that streams BAM files in chunks.
 """
 
 import time
-from typing import Iterator, List
+from typing import List
 
 import dagster
 import pysam
-from dagster import DynamicOut, DynamicOutput, OpExecutionContext, op
+from dagster import AssetExecutionContext, asset
 
 from .stream_bam import (
     BamStats,
@@ -54,19 +54,22 @@ class BamChunkStreamer(dagster.Model, dagster.Resolvable):
     yielding dynamic outputs for parallel processing.
     """
 
+    name: str  # Unique identifier for this streamer instance
     bam_url: str
     chunk_size: int = 1000
 
     def build_defs(self, context):
-        @op(out=DynamicOut())
-        def load_bam_chunks(
-            context: OpExecutionContext,
-        ) -> Iterator[DynamicOutput[BamChunk]]:
+        @asset(
+            name=f"{self.name}_chunks",  # Unique asset name based on instance
+            compute_kind="bam_streaming",
+            description=f"Streams BAM file in memory-efficient chunks for {self.name}",
+        )
+        def load_bam_chunks(context: AssetExecutionContext) -> List[BamChunk]:
             """
-            Load operation that streams BAM file in chunks without loading into memory.
+            Asset that streams BAM file in chunks and returns all chunks as a list.
 
-            Yields dynamic outputs for each chunk, allowing downstream processing
-            to happen incrementally without storing all data in memory.
+            While not as memory-efficient as dynamic outputs, this allows for
+            asset-based composition where other components can consume the chunks.
             """
             bam_url = self.bam_url
             chunk_size = self.chunk_size
@@ -88,6 +91,7 @@ class BamChunkStreamer(dagster.Model, dagster.Resolvable):
             samfile = pysam.AlignmentFile(bam_url, "rb")
             start_time = time.time()
 
+            chunks = []
             chunk = []
             chunk_count = 0
             reads_processed = 0
@@ -107,7 +111,7 @@ class BamChunkStreamer(dagster.Model, dagster.Resolvable):
                         )
                         context.log.info(progress_msg)
 
-                        # Yield the chunk as a dynamic output
+                        # Create chunk and add to list
                         bam_chunk = BamChunk(
                             chunk_id=chunk_count,
                             total_chunks=total_chunks,
@@ -116,19 +120,7 @@ class BamChunkStreamer(dagster.Model, dagster.Resolvable):
                             ),  # Convert to serializable format
                             bam_url=bam_url,
                         )
-
-                        yield DynamicOutput(
-                            bam_chunk,
-                            f"chunk_{chunk_count}",
-                            metadata={
-                                "chunk_id": chunk_count,
-                                "total_chunks": total_chunks,
-                                "reads_in_chunk": len(chunk),
-                                "reads_processed": reads_processed,
-                                "progress_rate": f"{rate:.0f} reads/sec",
-                            },
-                        )
-
+                        chunks.append(bam_chunk)
                         chunk = []
 
                 # Handle final partial chunk
@@ -151,19 +143,7 @@ class BamChunkStreamer(dagster.Model, dagster.Resolvable):
                         reads=serialize_reads(chunk),  # Convert to serializable format
                         bam_url=bam_url,
                     )
-
-                    yield DynamicOutput(
-                        bam_chunk,
-                        f"chunk_{chunk_count}",
-                        metadata={
-                            "chunk_id": chunk_count,
-                            "total_chunks": total_chunks,
-                            "reads_in_chunk": len(chunk),
-                            "reads_processed": reads_processed,
-                            "progress_rate": f"{rate:.0f} reads/sec",
-                            "is_final": True,
-                        },
-                    )
+                    chunks.append(bam_chunk)
 
             finally:
                 samfile.close()
@@ -178,5 +158,7 @@ class BamChunkStreamer(dagster.Model, dagster.Resolvable):
                 context.log.info(f"Total reads processed: {reads_processed}")
                 context.log.info(f"Total time: {total_time:.2f} seconds")
                 context.log.info(f"Average rate: {avg_rate:.0f} reads/second")
+
+            return chunks
 
         return load_bam_chunks

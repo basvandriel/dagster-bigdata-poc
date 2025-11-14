@@ -1,34 +1,42 @@
-from dagster import definitions
+from dagster import definitions, Definitions
 from dagster.components.core.component_tree import ComponentTree
 
-from .components.bam_processing_pipeline import BamProcessingPipeline
 from .components.bam_chunk_processor import BamChunkProcessor
 from .components.bam_chunk_streamer import BamChunkStreamer
 from .components.bam_file_sensor import BamFileSensor
 
 
+# This is great, but we can allow much better typing if we have one orchestrator I believe.
+
+
 @definitions
 def defs():
-    # Create individual components with their configurations
-    streamer = BamChunkStreamer(
+    # Create multiple BAM ingestion pipelines with unique names
+    pipelines = []
+
+    hg00096_streamer = BamChunkStreamer(
+        name="hg00096",
         bam_url="https://s3.amazonaws.com/1000genomes/phase3/data/HG00096/alignment/HG00096.chrom20.ILLUMINA.bwa.GBR.low_coverage.20120522.bam",
         chunk_size=1000,
     )
-
-    processor = BamChunkProcessor(
-        persistence_backend="logging",  # Can be changed to "neo4j" or "mysql"
+    hg00096_processor = BamChunkProcessor(
+        name="hg00096",
+        persistence_backend="logging",  # Could be "neo4j" or "mysql"
     )
+    pipelines.extend([hg00096_streamer, hg00096_processor])
 
-    sensor = BamFileSensor(
+    # Create sensors for each pipeline
+    sensors = []
+    hg00096_sensor = BamFileSensor(
+        name="hg00096",  # Must match the streamer name
         bam_url="https://s3.amazonaws.com/1000genomes/phase3/data/HG00096/alignment/HG00096.chrom20.ILLUMINA.bwa.GBR.low_coverage.20120522.bam",
         minimum_interval_seconds=60,
     )
+    sensors.append(hg00096_sensor)
 
-    # Inject components into the pipeline - loose coupling
-    pipeline_component = BamProcessingPipeline(
-        streamer=streamer, processor=processor, sensor=sensor
-    )
-
-    # Build definitions from the component
+    # Build definitions from all components
     context = ComponentTree.for_test().load_context
-    return pipeline_component.build_defs(context)
+    return Definitions(
+        assets=[component.build_defs(context) for component in pipelines],
+        sensors=[sensor.build_defs(context) for sensor in sensors],
+    )
