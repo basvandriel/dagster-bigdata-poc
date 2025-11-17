@@ -67,6 +67,7 @@ class StreamingBamChunkStreamer(dagster.Model, dagster.Resolvable):
 
     name: str = "streaming_bam_chunk_streamer"
     chunk_size: int = 1000  # Number of reads per chunk
+    max_chunks: int = None  # Maximum number of chunks to process (None = all)
 
     def build_defs(self, context):
         @op(
@@ -97,17 +98,9 @@ class StreamingBamChunkStreamer(dagster.Model, dagster.Resolvable):
             else:
                 bam_file_path = parsed_url.path  # Use path for file://
 
-            context.log.info(f"🎬 Starting streaming for BAM file: {bam_file_path}")
-            context.log.info(f"📏 Using chunk size: {self.chunk_size}")
-
             # Get statistics to calculate total chunks
             stats = BamStats.from_url(bam_file_path)
             total_chunks = calculate_total_chunks(stats.total_reads, self.chunk_size)
-
-            context.log.info(
-                f"📊 BAM stats: {stats.total_reads:,} reads, {stats.num_references} references"
-            )
-            context.log.info(f"📦 Total chunks: {total_chunks}")
 
             chunk_count = 0
             total_reads = 0
@@ -118,6 +111,13 @@ class StreamingBamChunkStreamer(dagster.Model, dagster.Resolvable):
                     bam_file_path, chunk_size=self.chunk_size
                 ):
                     chunk_count += 1
+
+                    # Check if we've reached the max_chunks limit
+                    if self.max_chunks and chunk_count > self.max_chunks:
+                        context.log.info(
+                            f"🛑 Stopping after {self.max_chunks} chunks (limit reached)"
+                        )
+                        break
                     total_reads += len(chunk_reads)
 
                     # Serialize reads for the BamChunk
@@ -133,11 +133,6 @@ class StreamingBamChunkStreamer(dagster.Model, dagster.Resolvable):
 
                     # Create dynamic output for this chunk
                     chunk_id_str = f"chunk_{chunk_count:06d}"
-
-                    context.log.info(
-                        f"📤 Yielding {chunk_id_str}: {len(serialized_reads)} reads "
-                        f"(total: {total_reads} reads, {chunk_count}/{total_chunks} chunks)"
-                    )
 
                     yield DynamicOutput(
                         value=bam_chunk,

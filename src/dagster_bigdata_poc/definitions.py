@@ -1,3 +1,13 @@
+import logging
+
+# Configure logging to reduce verbosity - set at the very beginning
+logging.basicConfig(level=logging.ERROR, force=True)
+logging.getLogger().setLevel(logging.ERROR)
+logging.getLogger("dagster").setLevel(logging.ERROR)
+logging.getLogger("dagster._core").setLevel(logging.ERROR)
+logging.getLogger("dagster._core.executor").setLevel(logging.ERROR)
+logging.getLogger("dagster._core.execution").setLevel(logging.ERROR)
+
 from dagster import definitions, Definitions, job
 from dagster.components.core.component_tree import ComponentTree
 
@@ -16,7 +26,9 @@ def defs():
     context = ComponentTree.for_test().load_context
 
     # Create streaming components that depend on each other
-    streaming_streamer = StreamingBamChunkStreamer()
+    streaming_streamer = StreamingBamChunkStreamer(
+        max_chunks=100  # Limit to 100 chunks for faster testing
+    )
     streaming_processor = StreamingBamChunkProcessor()
 
     streaming_sensor = StreamingBamFileSensor(

@@ -42,12 +42,8 @@ class StreamingBamChunkProcessor(dagster.Model, dagster.Resolvable):
             chunk_id = chunk.chunk_id
             read_count = len(chunk.reads)
 
-            context.log.info(
-                f"🔬 Processing {chunk_id}: {read_count} reads "
-                f"({chunk.chunk_id}/{chunk.total_chunks})"
-            )
-
             # Example processing: analyze read quality, filter reads, etc.
+            context.log.info(f"🔄 Processing chunk {chunk_id} with {read_count} reads")
             processed_data = self._process_chunk(chunk)
 
             # Save processed chunk to output directory
@@ -73,8 +69,6 @@ class StreamingBamChunkProcessor(dagster.Model, dagster.Resolvable):
 
             with open(output_file, "w") as f:
                 json.dump(serializable_data, f, indent=2)
-
-            context.log.info(f"💾 Saved processed chunk to: {output_file}")
 
             return {
                 "chunk_id": chunk_id,

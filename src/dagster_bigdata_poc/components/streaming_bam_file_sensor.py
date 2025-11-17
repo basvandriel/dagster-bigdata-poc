@@ -4,6 +4,7 @@ Streaming BAM File Sensor Component
 A sensor component that detects new BAM files and triggers streaming jobs.
 """
 
+import time
 import dagster
 from dagster import RunRequest, sensor
 
@@ -70,10 +71,13 @@ class BamFileSensor(dagster.Model, dagster.Resolvable):
             for bam_url in new_urls:
                 url_id = bam_url
 
+                # Use timestamp to make run_key unique for testing
+                run_key = f"{url_id}_{int(time.time())}"
+
                 context.log.info(f"🎯 Triggering streaming job for: {bam_url}")
 
                 yield RunRequest(
-                    run_key=url_id,
+                    run_key=run_key,
                     run_config={
                         "inputs": {
                             "bam_url": bam_url,
@@ -86,8 +90,8 @@ class BamFileSensor(dagster.Model, dagster.Resolvable):
                     },
                 )
 
-                # Mark as processed
-                processed_urls.add(url_id)
-                context.update_cursor(json.dumps(list(processed_urls)))
+                # Mark as processed (disabled for testing)
+                # processed_urls.add(url_id)
+                # context.update_cursor(json.dumps(list(processed_urls)))
 
         return bam_file_sensor_fn
