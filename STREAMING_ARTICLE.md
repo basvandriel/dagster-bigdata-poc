@@ -1,8 +1,8 @@
 # Streaming Big Data Files in Dagster: How We Stopped Loading Terabytes Into RAM
 
-I was building a data pipeline with Dagster for bioinformatical information, in this case with BAM files compressed DNA sequencing data. These can easily go up terabytes in size - millions of DNA reads, each representing a tiny part of someone's gemone.
+I was building a data pipeline with Dagster for bioinformatical information, in this case with BAM files compressed DNA sequencing data. These can easily go up terabytes in size - millions of DNA reads, each representing a tiny part of someone's genome.
 
-The goal of the pipeline was to ingest these into anj file-based database. However, with limited resources (512 MB RAM, 1 CPU) this obviously was a problem. You can't just load the entire file into memory, that doesn't scale. 
+The goal of the pipeline was to ingest these into any file-based database. However, with limited resources (512 MB RAM, 1 CPU) this obviously was a problem. You can't just load the entire file into memory, that doesn't scale. 
 
 TLDR: We're streaming it.
 
@@ -59,7 +59,7 @@ def streaming_job(bam_url: str, chunk_index: int):
 
 **The good:** Each job only processes one chunk, so memory usage stays low.
 
-**The bad:** For our test file, this created 2,932 separate jobs. Quite abit of overhead. Plus, how would we launch one ingestion?
+**The bad:** For our test file, this created 2,932 separate jobs. Quite a bit of overhead. Plus, how would we launch one ingestion?
 
 ## The solution: Single-Op Streaming
 
@@ -109,7 +109,7 @@ This means the following.
 I tested this with our 2.9 million read BAM file. Here's what happened:
 
 - **Memory usage:** Rock solid at ~5MB regardless of file size
-- **Processing speed:** ~34,000 reads per second
+- **Processing speed:** ~34,000 reads per second (sequential)
 - **Scalability:** Would work identically for a 100GB file
 
 **Memory scaling - the dream scenario:**
@@ -126,14 +126,10 @@ I tested this with our 2.9 million read BAM file. Here's what happened:
 3. **Keep it simple** - One op handling streaming + processing beat complex multi-op architectures.
 4. **Test with real data** - Our 2.9M read file caught issues that toy examples wouldn't have.
 
----
-
 ## What's next
 
-This approach opens up some exciting possibilities:
-
-- **Async I/O:** Use aiofiles for non-blocking file writes during processing
-- **Monitoring:** Add metrics to track processing rates and memory usage
+- **Advanced monitoring:** Add Prometheus metrics and Grafana dashboards
+- **Database integration:** Direct streaming into analytical databases
 
 ---
 
@@ -143,9 +139,9 @@ Everything I built is open source at:
 [github.com/basvandriel/dagster-bigdata-poc](https://github.com/basvandriel/dagster-bigdata-poc)
 
 Key files to check out:
-- `src/dagster_bigdata_poc/components/streaming_bam_chunk_streamer.py`
-- `src/dagster_bigdata_poc/components/stream_bam.py`
-- `src/dagster_bigdata_poc/definitions.py`
+- `src/dagster_bigdata_poc/components/streaming_bam_chunk_streamer.py` - Streaming component implementation
+- `src/dagster_bigdata_poc/components/stream_bam.py` - Core streaming logic and BAM utilities
+- `src/dagster_bigdata_poc/definitions.py` - Dagster job and sensor definitions
 
 
 *Published: November 2025*
