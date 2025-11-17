@@ -1,6 +1,6 @@
-# Streaming Big Data Files in Dagster: How We Stopped Loading Terabytes Into RAM
+# Streaming Big Data Files in Dagster: How I stopped loading Gigabytes into RAM
 
-I was building a data pipeline with Dagster for bioinformatical information. In this case, I worked with BAM files: compressed DNA sequencing data. These can easily go up terabytes in size - millions of DNA reads, each representing a tiny part of someone's genome.
+I was building a data pipeline with [Dagster](https://dagster.io/) for bioinformatical information. In this case, I worked with BAM files: compressed DNA sequencing data. These can easily go up terabytes in size - millions of DNA reads, each representing a tiny part of someone's genome.
 
 The goal of the pipeline was to ingest these into any file-based database. However, with limited resources (512 MB RAM, 1 CPU) this obviously was a problem. You can't just load the entire file into memory, that doesn't scale. 
 
@@ -12,12 +12,12 @@ TLDR: We're streaming it.
 I'm using a file with **2.9 million DNA reads** coming in around `~300 Mb` - just a tiny slice of what real genomic datasets look like. The requirements:
 - Handle big files without overloading the RAM
 - Keep processing speed reasonable
-- Use Dagster's modern component system
+- Use [Dagster's modern component system](https://docs.dagster.io/guides/build/components)
 - Set it up so new files get processed automatically
 
 ---
 
-## Attempt 1: `DynamicOut`
+## Attempt 1: using [`DynamicOut`](https://docs.dagster.io/api/dagster/dynamic)
 
 I started with Dagster's dynamic outputs, which seemed perfect for streaming. The idea was to yield chunks one at a time and process them downstream.
 
@@ -31,7 +31,7 @@ def stream_bam_chunks_op(context, bam_url: str):
 def process_chunk_op(context, chunk: BamChunk):
     return process(chunk)
 
-@job
+@op
 def streaming_job(bam_url: str):
     chunks = stream_bam_chunks_op(bam_url)
     process_chunk_op.map(chunks)
