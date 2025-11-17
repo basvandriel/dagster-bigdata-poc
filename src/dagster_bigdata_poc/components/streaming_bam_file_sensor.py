@@ -26,8 +26,8 @@ class BamFileSensor(dagster.Model, dagster.Resolvable):
     def build_defs(self, context):
         @sensor(
             name=self.name,
-            job_name=self.job_name,  # Use configurable job name
-            minimum_interval_seconds=30,  # Check every 30 seconds
+            job_name=self.job_name,
+            minimum_interval_seconds=self.minimum_interval_seconds,
         )
         def bam_file_sensor_fn(context):
             """
