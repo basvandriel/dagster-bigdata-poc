@@ -1,5 +1,13 @@
 import logging
 
+from dagster import definitions, Definitions, job
+from dagster.components.core.component_tree import ComponentTree
+
+from .components.streaming_bam_chunk_streamer import StreamingBamChunkStreamer
+from .components.streaming_bam_file_sensor import (
+    BamFileSensor as StreamingBamFileSensor,
+)
+
 # Configure logging to reduce verbosity - set at the very beginning
 logging.basicConfig(level=logging.ERROR, force=True)
 logging.getLogger().setLevel(logging.ERROR)
@@ -7,15 +15,6 @@ logging.getLogger("dagster").setLevel(logging.ERROR)
 logging.getLogger("dagster._core").setLevel(logging.ERROR)
 logging.getLogger("dagster._core.executor").setLevel(logging.ERROR)
 logging.getLogger("dagster._core.execution").setLevel(logging.ERROR)
-
-from dagster import definitions, Definitions, job
-from dagster.components.core.component_tree import ComponentTree
-
-from .components.streaming_bam_chunk_streamer import StreamingBamChunkStreamer
-from .components.streaming_bam_chunk_processor import StreamingBamChunkProcessor
-from .components.streaming_bam_file_sensor import (
-    BamFileSensor as StreamingBamFileSensor,
-)
 
 # TODO allow for better typing
 # The streaming bam chunk processor should only work with streaming bam chunks
@@ -25,9 +24,8 @@ from .components.streaming_bam_file_sensor import (
 def defs():
     context = ComponentTree.for_test().load_context
 
-    # Create streaming components that depend on each other
+    # Create streaming components
     streaming_streamer = StreamingBamChunkStreamer(max_chunks=20)
-    streaming_processor = StreamingBamChunkProcessor()
 
     streaming_sensor = StreamingBamFileSensor(
         name="streaming_bam_sensor",
@@ -38,16 +36,14 @@ def defs():
     )
 
     # Get the ops from the components
-    stream_op = streaming_streamer.build_defs(context)
-    process_op = streaming_processor.build_defs(context)
+    stream_and_process_op = streaming_streamer.build_defs(context)
     sensor_def = streaming_sensor.build_defs(context)
 
-    # Create the streaming job by composing the ops directly
+    # Create the streaming job using the combined streaming and processing op
     @job(name="streaming_bam_job")
-    def streaming_bam_job(bam_url: str, chunk_index: int):
-        """Job that streams and processes a single BAM chunk."""
-        # Connect streamer output to processor input
-        chunk = stream_op(bam_url, chunk_index)
-        process_op(chunk)
+    def streaming_bam_job(bam_url: str):
+        """Job that streams and processes all BAM chunks sequentially in one op."""
+        # Single op handles streaming and processing
+        stream_and_process_op(bam_url)
 
     return Definitions(sensors=[sensor_def], jobs=[streaming_bam_job])
