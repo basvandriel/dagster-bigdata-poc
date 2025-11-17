@@ -97,7 +97,7 @@ def stream_bam_chunks(bam_url: str, chunk_size: int = 1000):
         samfile.close()
 ```
 
-This means:
+This means the following.
 
 - **Only one chunk exists at a time** - When we yield a chunk, the generator pauses. The consumer processes it, then the generator resumes and creates a new empty chunk.
 - **Memory gets freed immediately** - No holding onto old chunks
@@ -106,7 +106,7 @@ This means:
 
 ## Performance
 
-We tested this with our 2.9 million read BAM file. Here's what happened:
+I tested this with our 2.9 million read BAM file. Here's what happened:
 
 - **Memory usage:** Rock solid at ~5MB regardless of file size
 - **Processing speed:** ~34,000 reads per second
@@ -125,22 +125,19 @@ We tested this with our 2.9 million read BAM file. Here's what happened:
 2. **Python generators are your friend** - They enable true streaming with minimal memory overhead.
 3. **Keep it simple** - One op handling streaming + processing beat complex multi-op architectures.
 4. **Test with real data** - Our 2.9M read file caught issues that toy examples wouldn't have.
-5. **Memory efficiency is achievable** - You don't need to load everything into RAM to process big data.
 
 ---
 
-## What's Next
+## What's next
 
 This approach opens up some exciting possibilities:
 
 - **Async I/O:** Use aiofiles for non-blocking file writes during processing
-- **Bounded concurrency:** Process a few chunks simultaneously for CPU-intensive work
-- **Compression:** Stream compressed outputs directly
 - **Monitoring:** Add metrics to track processing rates and memory usage
 
 ---
 
-## The Code
+## The code
 
 Everything I built is open source at:
 [github.com/basvandriel/dagster-bigdata-poc](https://github.com/basvandriel/dagster-bigdata-poc)
