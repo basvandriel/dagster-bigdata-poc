@@ -1,33 +1,25 @@
 # Streaming Big Data Files in Dagster: How We Stopped Loading Terabytes Into RAM
 
+I was building a data pipeline with Dagster for bioinformatical information, in this case with BAM files compressed DNA sequencing data. These can easily go up terabytes in size - millions of DNA reads, each representing a tiny part of someone's gemone.
 
-## The Problem
+The goal of the pipeline was to ingest these into anj file-based database. However, with limited resources (512 MB RAM, 1 CPU) this obviously was a problem. You can't just load the entire file into memory, that doesn't scale. 
 
-Picture this: You're building a data pipeline for bioinformatics. You've got these BAM files - compressed DNA sequencing data - that can be **terabytes** in size. Millions of DNA reads, each representing a tiny snippet of someone's genome.
+TLDR: We're streaming it.
 
-Your pipeline needs to process these files, but here's the kicker: you can't just load the whole thing into memory. That would require more RAM than most servers have!
 
-I spent way too many late nights wrestling with this. Traditional approaches? Load everything into memory and hope for the best. But that doesn't scale. What if there was a way to process these massive files without ever loading them all at once?
+## Test case
 
-Spoiler: There is. And it involves streaming.
-
----
-
-## What We're Building
-
-We're creating a bioinformatics pipeline using Dagster to process BAM files from the 1000 Genomes Project. Our test case is a file with **2.9 million DNA reads** from chromosome 20 - just a tiny slice of what real genomic datasets look like.
-
-The requirements were straightforward but challenging:
-- Handle files bigger than available RAM
+I'm using a file with **2.9 million DNA reads** coming in around `~300 Mb` - just a tiny slice of what real genomic datasets look like. The requirements?
+- Handle big files without overloading the RAM
 - Keep processing speed reasonable
 - Use Dagster's modern component system
 - Set it up so new files get processed automatically
 
 ---
 
-## Our First Try: Dynamic Outputs (Or: The Great Memory Leak)
+## Attempt 1: `DynamicOut`
 
-We started with Dagster's dynamic outputs, which sounded perfect for streaming. The idea was to yield chunks one at a time and process them downstream.
+I started with Dagster's dynamic outputs, which seemed perfect for streaming. The idea was to yield chunks one at a time and process them downstream.
 
 ```python
 @op(out=DynamicOut())
@@ -45,21 +37,12 @@ def streaming_job(bam_url: str):
     process_chunk_op.map(chunks)
 ```
 
-We thought: "Perfect! Each chunk will flow directly to its processor. No buffering!"
+**What actually happened:** Dagster collected all the dynamic outputs before even starting the downstream processing. For our test file with 2,932 chunks, this meant the entire file got loaded into memory anyway. Back to the drawing board 😅
 
-Boy, were we wrong.
 
-**What actually happened:** Dagster collected ALL the dynamic outputs before even starting the downstream processing. For our test file with 2,932 chunks, this meant the entire file got loaded into memory anyway.
+## Attempt 2: One job run per chunk
 
-*Memory usage: Scaled linearly with file size ❌*
-
-Back to the drawing board.
-
----
-
-## Attempt 2: One Job Per Chunk (Or: Job Explosion)
-
-Okay, so dynamic outputs buffer everything. What if we launch a separate job for each chunk? That way, each job only handles one chunk.
+What if there were separate jobs for each chunk? That way, each job only handles one chunk.
 
 ```python
 # Sensor launches 2932 jobs (one per chunk)
@@ -76,17 +59,11 @@ def streaming_job(bam_url: str, chunk_index: int):
 
 **The good:** Each job only processes one chunk, so memory usage stays low.
 
-**The bad:** For our test file, this created 2,932 separate jobs. Imagine the orchestration overhead! Plus, tracking thousands of jobs? Total nightmare.
+**The bad:** For our test file, this created 2,932 separate jobs. Quite abit of overhead. Plus, how would we launch one ingestion?
 
-*Manageability: Poor for large files ❌*
+## The solution: Single-Op Streaming
 
-We needed a better way.
-
----
-
-## The Breakthrough: Single-Op Streaming
-
-After two failed attempts, we finally cracked it. The solution was elegantly simple: combine streaming and processing in a single op that handles chunks immediately.
+Instead of using multiple jobs runs or multiple operations, just use one `op`. In here, we can use the iteration result from `stream_bam_chunks` and for every chunk, save it to our file system.
 
 ```python
 @op
@@ -100,13 +77,7 @@ def stream_and_process_op(context, bam_url: str):
     return results
 ```
 
-**The key insight:** Python generators are lazy. They yield one chunk at a time. Process it immediately, then let the generator forget about it. No buffering required!
-
----
-
-## How The Streaming Actually Works
-
-The magic happens in our `stream_bam_chunks()` function. It's deceptively simple, but that's what makes it powerful.
+Python generators are lazy. They yield one chunk at a time. Process it immediately, then let the generator forget about it. No buffering required.
 
 ```python
 def stream_bam_chunks(bam_url: str, chunk_size: int = 1000):
@@ -118,7 +89,7 @@ def stream_bam_chunks(bam_url: str, chunk_size: int = 1000):
             chunk.append(read)
             if len(chunk) >= chunk_size:
                 yield chunk  # Hand chunk to consumer
-                chunk = []   # Start fresh - memory freed!
+                chunk = []   # Start fresh - memory freed
 
         if chunk:  # Don't forget the last few reads
             yield chunk
@@ -126,14 +97,11 @@ def stream_bam_chunks(bam_url: str, chunk_size: int = 1000):
         samfile.close()
 ```
 
-Here's what's clever about this approach:
+This means:
 
 - **Only one chunk exists at a time** - When we yield a chunk, the generator pauses. The consumer processes it, then the generator resumes and creates a new empty chunk.
 - **Memory gets freed immediately** - No holding onto old chunks
 - **File handles are managed properly** - The `finally` block ensures cleanup
-
-It's like a conveyor belt: chunk comes off the generator, gets processed, disappears. Next chunk arrives. Perfect memory efficiency.
-
 ---
 
 ## Performance
@@ -141,7 +109,7 @@ It's like a conveyor belt: chunk comes off the generator, gets processed, disapp
 We tested this with our 2.9 million read BAM file. Here's what happened:
 
 - **Memory usage:** Rock solid at ~5MB regardless of file size
-- **Processing speed:** ~34,000 reads per second (not too shabby!)
+- **Processing speed:** ~34,000 reads per second
 - **Scalability:** Would work identically for a 100GB file
 
 **Memory scaling - the dream scenario:**
@@ -149,40 +117,14 @@ We tested this with our 2.9 million read BAM file. Here's what happened:
 - 10GB file: ~5MB RAM
 - 100GB file: ~5MB RAM
 
-No more sweating server costs or crashed pipelines!
-
-Testing with our 2.9M read BAM file:
-
-- **Memory usage:** Constant (~chunk size + overhead)
-- **Throughput:** ~34,000 reads/second
-- **Scalability:** Works identically for 100GB files
-- **CPU efficiency:** Minimal overhead from streaming
-
-**Memory scaling:**
-- 1GB file: ~5MB RAM
-- 10GB file: ~5MB RAM
-- 100GB file: ~5MB RAM
-
 ---
 
-### Error Handling That Doesn't Suck
-- Validate BAM files before processing (don't waste time on corrupted files)
-- Graceful handling of network timeouts
-- Proper cleanup of file handles and temporary resources
-- Meaningful error messages for debugging
+## Lessons learned 
 
----
-
-## Lessons Learned (The Hard Way)
-
-1. **Dagster's dynamic outputs aren't truly streaming** - They buffer everything first. Don't assume they're lazy!
-
+1. **Dagster's dynamic outputs aren't truly streaming** - They buffer everything first.
 2. **Python generators are your friend** - They enable true streaming with minimal memory overhead.
-
-3. **Sometimes simpler is better** - One op handling streaming + processing beat complex multi-op architectures.
-
+3. **Keep it simple** - One op handling streaming + processing beat complex multi-op architectures.
 4. **Test with real data** - Our 2.9M read file caught issues that toy examples wouldn't have.
-
 5. **Memory efficiency is achievable** - You don't need to load everything into RAM to process big data.
 
 ---
@@ -200,7 +142,7 @@ This approach opens up some exciting possibilities:
 
 ## The Code
 
-Everything we built is open source at:
+Everything I built is open source at:
 [github.com/basvandriel/dagster-bigdata-poc](https://github.com/basvandriel/dagster-bigdata-poc)
 
 Key files to check out:
@@ -208,11 +150,6 @@ Key files to check out:
 - `src/dagster_bigdata_poc/components/stream_bam.py`
 - `src/dagster_bigdata_poc/definitions.py`
 
----
-
-*This technique scales bioinformatics pipelines to handle the massive datasets of modern genomics. Who knew processing terabytes could be so memory-efficient?*
-
----
 
 *Published: November 2025*
 *Author: Bas van Driel*
