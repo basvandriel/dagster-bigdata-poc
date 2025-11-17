@@ -1,6 +1,6 @@
 # Streaming Big Data Files in Dagster: How We Stopped Loading Terabytes Into RAM
 
-I was building a data pipeline with Dagster for bioinformatical information, in this case with BAM files compressed DNA sequencing data. These can easily go up terabytes in size - millions of DNA reads, each representing a tiny part of someone's genome.
+I was building a data pipeline with Dagster for bioinformatical information. In this case, I worked with BAM files: compressed DNA sequencing data. These can easily go up terabytes in size - millions of DNA reads, each representing a tiny part of someone's genome.
 
 The goal of the pipeline was to ingest these into any file-based database. However, with limited resources (512 MB RAM, 1 CPU) this obviously was a problem. You can't just load the entire file into memory, that doesn't scale. 
 
@@ -9,7 +9,7 @@ TLDR: We're streaming it.
 
 ## Test case
 
-I'm using a file with **2.9 million DNA reads** coming in around `~300 Mb` - just a tiny slice of what real genomic datasets look like. The requirements?
+I'm using a file with **2.9 million DNA reads** coming in around `~300 Mb` - just a tiny slice of what real genomic datasets look like. The requirements:
 - Handle big files without overloading the RAM
 - Keep processing speed reasonable
 - Use Dagster's modern component system
@@ -59,7 +59,7 @@ def streaming_job(bam_url: str, chunk_index: int):
 
 **The good:** Each job only processes one chunk, so memory usage stays low.
 
-**The bad:** For our test file, this created 2,932 separate jobs. Quite a bit of overhead. Plus, how would we launch one ingestion?
+**The bad:** For our test file, this created 2,932 separate jobs. Quite a bit of overhead. Plus, how would we launch one ingestion run?
 
 ## The solution: Single-Op Streaming
 
@@ -128,7 +128,7 @@ I tested this with our 2.9 million read BAM file. Here's what happened:
 
 ## What's next
 
-- **Advanced monitoring:** Add Prometheus metrics and Grafana dashboards
+- **Advanced monitoring:** Add memory metrics and measure time
 - **Database integration:** Direct streaming into analytical databases
 
 ---
