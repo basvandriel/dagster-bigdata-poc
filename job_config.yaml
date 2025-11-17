@@ -1,0 +1,3 @@
+inputs:
+  bam_url:
+    value: "https://s3.amazonaws.com/1000genomes/phase3/data/HG00096/alignment/HG00096.chrom20.ILLUMINA.bwa.GBR.low_coverage.20120522.bam"

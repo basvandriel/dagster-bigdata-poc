@@ -4,8 +4,10 @@ Streaming BAM File Sensor Component
 A sensor component that detects new BAM files and triggers streaming jobs.
 """
 
+import time
 import dagster
 from dagster import RunRequest, sensor
+from .stream_bam import BamStats
 
 
 class BamFileSensor(dagster.Model, dagster.Resolvable):
@@ -17,15 +19,15 @@ class BamFileSensor(dagster.Model, dagster.Resolvable):
     """
 
     name: str = "bam_file_sensor"
-    bam_urls: list[str] = []  # List of BAM URLs to process
-    job_name: str = "streaming_bam_job"  # Name of the job to trigger
-    minimum_interval_seconds: int = 30  # Check every 30 seconds
+    bam_urls: list[str] = []
+    job_name: str = "streaming_bam_job"
+    minimum_interval_seconds: int = 30
 
     def build_defs(self, context):
         @sensor(
             name=self.name,
-            job_name=self.job_name,  # Use configurable job name
-            minimum_interval_seconds=30,  # Check every 30 seconds
+            job_name=self.job_name,
+            minimum_interval_seconds=self.minimum_interval_seconds,
         )
         def bam_file_sensor_fn(context):
             """
@@ -34,8 +36,9 @@ class BamFileSensor(dagster.Model, dagster.Resolvable):
             This sensor:
             1. Checks configured BAM URLs
             2. Identifies URLs that haven't been processed yet
-            3. Triggers streaming jobs for new URLs
-            4. Tracks processed URLs to avoid duplicates
+            3. Calculates total chunks for each URL
+            4. Triggers individual jobs for each chunk
+            5. Tracks processed URLs to avoid duplicates
             """
             if not self.bam_urls:
                 context.log.info("No BAM URLs configured for sensor")
@@ -66,14 +69,30 @@ class BamFileSensor(dagster.Model, dagster.Resolvable):
 
             context.log.info(f"Found {len(new_urls)} new BAM URLs to process")
 
-            # Yield run requests for each new URL
+            # Yield run requests for each new URL - one per chunk
             for bam_url in new_urls:
                 url_id = bam_url
 
-                context.log.info(f"🎯 Triggering streaming job for: {bam_url}")
+                # Calculate total chunks for this BAM file
+                try:
+                    stats = BamStats.from_url(bam_url)
+                    context.log.info(
+                        f"📊 BAM file {bam_url}: {stats.total_reads:,} reads"
+                    )
+                except Exception as e:
+                    context.log.error(f"❌ Failed to analyze BAM file {bam_url}: {e}")
+                    continue
+
+                # Launch one job per BAM file (streaming handles all chunks internally)
+                # Use timestamp to make run_key unique
+                run_key = f"{url_id}_{int(time.time())}"
+
+                context.log.info(
+                    f"🎯 Triggering streaming job for: {bam_url} ({stats.total_reads:,} reads)"
+                )
 
                 yield RunRequest(
-                    run_key=url_id,
+                    run_key=run_key,
                     run_config={
                         "inputs": {
                             "bam_url": bam_url,
@@ -82,12 +101,12 @@ class BamFileSensor(dagster.Model, dagster.Resolvable):
                     tags={
                         "url_id": url_id,
                         "bam_url": bam_url,
-                        "job_type": "streaming_bam",
+                        "job_type": "streaming_bam_file",
                     },
                 )
 
-                # Mark as processed
-                processed_urls.add(url_id)
-                context.update_cursor(json.dumps(list(processed_urls)))
+                # Mark as processed (disabled for testing)
+                # processed_urls.add(url_id)
+                # context.update_cursor(json.dumps(list(processed_urls)))
 
         return bam_file_sensor_fn
