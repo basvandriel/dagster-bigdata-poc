@@ -4,8 +4,6 @@ I was building a data pipeline with [Dagster](https://dagster.io/) for bioinform
 
 The goal of the pipeline was to ingest these into any file-based database. However, with limited resources (512 MB RAM, 1 CPU) this obviously was a problem. You can't just load the entire file into memory, that doesn't scale. 
 
-TLDR: We're streaming it.
-
 
 ## Test case
 
