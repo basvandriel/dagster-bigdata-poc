@@ -7,6 +7,7 @@ A sensor component that detects new BAM files and triggers streaming jobs.
 import time
 import dagster
 from dagster import RunRequest, sensor
+from .stream_bam import BamStats, calculate_total_chunks
 
 
 class BamFileSensor(dagster.Model, dagster.Resolvable):
@@ -21,6 +22,7 @@ class BamFileSensor(dagster.Model, dagster.Resolvable):
     bam_urls: list[str] = []  # List of BAM URLs to process
     job_name: str = "streaming_bam_job"  # Name of the job to trigger
     minimum_interval_seconds: int = 30  # Check every 30 seconds
+    chunk_size: int = 1000  # Chunk size for streaming
 
     def build_defs(self, context):
         @sensor(
@@ -35,8 +37,9 @@ class BamFileSensor(dagster.Model, dagster.Resolvable):
             This sensor:
             1. Checks configured BAM URLs
             2. Identifies URLs that haven't been processed yet
-            3. Triggers streaming jobs for new URLs
-            4. Tracks processed URLs to avoid duplicates
+            3. Calculates total chunks for each URL
+            4. Triggers individual jobs for each chunk
+            5. Tracks processed URLs to avoid duplicates
             """
             if not self.bam_urls:
                 context.log.info("No BAM URLs configured for sensor")
@@ -67,28 +70,42 @@ class BamFileSensor(dagster.Model, dagster.Resolvable):
 
             context.log.info(f"Found {len(new_urls)} new BAM URLs to process")
 
-            # Yield run requests for each new URL
+            # Yield run requests for each new URL - one per chunk
             for bam_url in new_urls:
                 url_id = bam_url
 
-                # Use timestamp to make run_key unique for testing
-                run_key = f"{url_id}_{int(time.time())}"
+                # Calculate total chunks for this BAM file
+                try:
+                    stats = BamStats.from_url(bam_url)
+                    total_chunks = calculate_total_chunks(stats.total_reads, self.chunk_size)
+                    context.log.info(f"📊 BAM file {bam_url}: {stats.total_reads:,} reads, {total_chunks} chunks")
+                except Exception as e:
+                    context.log.error(f"❌ Failed to analyze BAM file {bam_url}: {e}")
+                    continue
 
-                context.log.info(f"🎯 Triggering streaming job for: {bam_url}")
+                # Launch one job per chunk
+                for chunk_index in range(1, total_chunks + 1):  # 1-based indexing
+                    # Use timestamp and chunk index to make run_key unique
+                    run_key = f"{url_id}_chunk_{chunk_index}_{int(time.time())}"
 
-                yield RunRequest(
-                    run_key=run_key,
-                    run_config={
-                        "inputs": {
+                    context.log.info(f"🎯 Triggering streaming job for: {bam_url} (chunk {chunk_index}/{total_chunks})")
+
+                    yield RunRequest(
+                        run_key=run_key,
+                        run_config={
+                            "inputs": {
+                                "bam_url": bam_url,
+                                "chunk_index": chunk_index,
+                            }
+                        },
+                        tags={
+                            "url_id": url_id,
                             "bam_url": bam_url,
-                        }
-                    },
-                    tags={
-                        "url_id": url_id,
-                        "bam_url": bam_url,
-                        "job_type": "streaming_bam",
-                    },
-                )
+                            "chunk_index": str(chunk_index),
+                            "total_chunks": str(total_chunks),
+                            "job_type": "streaming_bam_chunk",
+                        },
+                    )
 
                 # Mark as processed (disabled for testing)
                 # processed_urls.add(url_id)

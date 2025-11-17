@@ -5,7 +5,7 @@ An ops-based component that streams BAM chunks without buffering in memory.
 """
 
 import dagster
-from dagster import DynamicOut, DynamicOutput, op
+from dagster import DynamicOut, DynamicOutput, op, Out
 from typing import Iterator, List
 import pysam
 from .stream_bam import stream_bam_chunks, BamStats, calculate_total_chunks
@@ -72,12 +72,12 @@ class StreamingBamChunkStreamer(dagster.Model, dagster.Resolvable):
     def build_defs(self, context):
         @op(
             name=self.name,
-            out=DynamicOut(BamChunk),
-            description="Streams BAM chunks dynamically without buffering in memory",
+            out=Out(BamChunk),
+            description="Streams a specific BAM chunk without buffering in memory",
         )
         def stream_bam_chunks_op(
-            context, bam_url: str
-        ) -> Iterator[DynamicOutput[BamChunk]]:
+            context, bam_url: str, chunk_index: int
+        ) -> BamChunk:
             """
             Op that streams BAM chunks using dynamic outputs.
 
@@ -102,8 +102,10 @@ class StreamingBamChunkStreamer(dagster.Model, dagster.Resolvable):
             stats = BamStats.from_url(bam_file_path)
             total_chunks = calculate_total_chunks(stats.total_reads, self.chunk_size)
 
+            context.log.info(f"🎯 Streaming chunk {chunk_index}/{total_chunks} from {bam_url}")
+
             chunk_count = 0
-            total_reads = 0
+            target_chunk = None
 
             try:
                 # Stream chunks from the BAM file
@@ -112,43 +114,31 @@ class StreamingBamChunkStreamer(dagster.Model, dagster.Resolvable):
                 ):
                     chunk_count += 1
 
-                    # Check if we've reached the max_chunks limit
-                    if self.max_chunks and chunk_count > self.max_chunks:
-                        context.log.info(
-                            f"🛑 Stopping after {self.max_chunks} chunks (limit reached)"
+                    # Only process the specified chunk
+                    if chunk_count == chunk_index:
+                        # Serialize reads for the BamChunk
+                        serialized_reads = serialize_reads(chunk_reads)
+
+                        # Create BamChunk object
+                        target_chunk = BamChunk(
+                            chunk_id=chunk_count,
+                            total_chunks=total_chunks,
+                            reads=serialized_reads,
+                            bam_url=bam_url,
                         )
+
+                        context.log.info(f"✅ Found chunk {chunk_count}: {len(serialized_reads)} reads")
+                        break  # Found the chunk, stop streaming
+
+                    # If we've passed the target chunk, something went wrong
+                    if chunk_count > chunk_index:
+                        context.log.error(f"❌ Chunk {chunk_index} not found, reached chunk {chunk_count}")
                         break
-                    total_reads += len(chunk_reads)
 
-                    # Serialize reads for the BamChunk
-                    serialized_reads = serialize_reads(chunk_reads)
+                if target_chunk is None:
+                    raise ValueError(f"❌ Requested chunk {chunk_index} but only found {chunk_count} chunks")
 
-                    # Create BamChunk object
-                    bam_chunk = BamChunk(
-                        chunk_id=chunk_count,
-                        total_chunks=total_chunks,
-                        reads=serialized_reads,
-                        bam_url=bam_url,
-                    )
-
-                    # Create dynamic output for this chunk
-                    chunk_id_str = f"chunk_{chunk_count:06d}"
-
-                    yield DynamicOutput(
-                        value=bam_chunk,
-                        mapping_key=chunk_id_str,
-                        metadata={
-                            "chunk_id": chunk_count,
-                            "read_count": len(serialized_reads),
-                            "total_reads": total_reads,
-                            "chunk_number": chunk_count,
-                            "bam_file": bam_file_path,
-                        },
-                    )
-
-                context.log.info(
-                    f"✅ Streaming complete: {chunk_count} chunks, {total_reads} total reads"
-                )
+                return target_chunk
 
             except Exception as e:
                 context.log.error(f"❌ Error during streaming: {e}")

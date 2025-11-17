@@ -26,9 +26,7 @@ def defs():
     context = ComponentTree.for_test().load_context
 
     # Create streaming components that depend on each other
-    streaming_streamer = StreamingBamChunkStreamer(
-        max_chunks=100  # Limit to 100 chunks for faster testing
-    )
+    streaming_streamer = StreamingBamChunkStreamer(max_chunks=20)
     streaming_processor = StreamingBamChunkProcessor()
 
     streaming_sensor = StreamingBamFileSensor(
@@ -46,9 +44,10 @@ def defs():
 
     # Create the streaming job by composing the ops directly
     @job(name="streaming_bam_job")
-    def streaming_bam_job(bam_url: str):
-        """Job that streams and processes BAM chunks without orchestration layer."""
-        # Connect streamer output to processor input using map
-        stream_op(bam_url).map(process_op)
+    def streaming_bam_job(bam_url: str, chunk_index: int):
+        """Job that streams and processes a single BAM chunk."""
+        # Connect streamer output to processor input
+        chunk = stream_op(bam_url, chunk_index)
+        process_op(chunk)
 
     return Definitions(sensors=[sensor_def], jobs=[streaming_bam_job])
