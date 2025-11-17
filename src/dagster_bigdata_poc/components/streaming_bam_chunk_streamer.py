@@ -5,56 +5,9 @@ An ops-based component that streams BAM chunks without buffering in memory.
 """
 
 import dagster
-from dagster import DynamicOut, DynamicOutput, op, Out
-from typing import Iterator, List
-import pysam
+from dagster import op, Out, job
+from typing import List
 from .stream_bam import stream_bam_chunks, BamStats, calculate_total_chunks
-from .types import BamChunk
-
-
-def serialize_reads(reads: List[pysam.AlignedSegment]) -> List[dict]:
-    """
-    Convert pysam AlignedSegment objects to serializable dictionaries.
-
-    Only extracts the essential read information needed for processing.
-    """
-    import numpy as np
-
-    def to_python_types(obj):
-        """Recursively convert numpy types to Python types."""
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        elif isinstance(obj, (np.integer, np.int64, np.int32)):
-            return int(obj)
-        elif isinstance(obj, (np.floating, np.float64, np.float32)):
-            return float(obj)
-        elif isinstance(obj, np.bool_):
-            return bool(obj)
-        elif isinstance(obj, dict):
-            return {k: to_python_types(v) for k, v in obj.items()}
-        elif isinstance(obj, (list, tuple)):
-            return [to_python_types(item) for item in obj]
-        else:
-            return obj
-
-    serialized = []
-    for read in reads:
-        read_dict = {
-            "query_name": read.query_name,
-            "flag": read.flag,
-            "reference_id": read.reference_id,
-            "reference_start": read.reference_start,
-            "mapping_quality": read.mapping_quality,
-            "cigarstring": read.cigarstring,
-            "next_reference_id": read.next_reference_id,
-            "next_reference_start": read.next_reference_start,
-            "template_length": read.template_length,
-            "query_sequence": read.query_sequence,
-            "query_qualities": read.query_qualities,
-        }
-        # Apply recursive conversion to handle all numpy types
-        serialized.append(to_python_types(read_dict))
-    return serialized
 
 
 class StreamingBamChunkStreamer(dagster.Model, dagster.Resolvable):
@@ -66,7 +19,7 @@ class StreamingBamChunkStreamer(dagster.Model, dagster.Resolvable):
     """
 
     name: str = "streaming_bam_chunk_streamer"
-    chunk_size: int = 1000  # Number of reads per chunk
+    chunk_size: int = 10_000  # Number of reads per chunk
     max_chunks: int = None  # Maximum number of chunks to process (None = all)
 
     def build_defs(self, context):
@@ -128,18 +81,6 @@ class StreamingBamChunkStreamer(dagster.Model, dagster.Resolvable):
                     context.log.info(
                         f"🔄 Processing chunk {chunks_processed}/{total_chunks}: {chunk_size} reads"
                     )
-
-                    # Serialize reads for processing
-                    serialized_reads = serialize_reads(chunk_reads)
-
-                    # Create chunk data
-                    chunk_data = {
-                        "chunk_id": chunks_processed,
-                        "total_chunks": total_chunks,
-                        "reads": serialized_reads,
-                        "bam_url": bam_url,
-                    }
-
                     # Process the chunk (simulate processing - in real implementation, call processor logic)
                     processed_result = {
                         "chunk_id": chunks_processed,
@@ -174,4 +115,10 @@ class StreamingBamChunkStreamer(dagster.Model, dagster.Resolvable):
 
             return results
 
-        return stream_and_process_op
+        # Create and return the job that uses the op
+        @job(name=f"{self.name}_job")
+        def streaming_bam_job(bam_url: str):
+            """Job that streams and processes all BAM chunks sequentially in one op."""
+            stream_and_process_op(bam_url)
+
+        return streaming_bam_job

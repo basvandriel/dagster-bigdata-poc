@@ -7,7 +7,7 @@ A sensor component that detects new BAM files and triggers streaming jobs.
 import time
 import dagster
 from dagster import RunRequest, sensor
-from .stream_bam import BamStats, calculate_total_chunks
+from .stream_bam import BamStats
 
 
 class BamFileSensor(dagster.Model, dagster.Resolvable):
@@ -19,10 +19,9 @@ class BamFileSensor(dagster.Model, dagster.Resolvable):
     """
 
     name: str = "bam_file_sensor"
-    bam_urls: list[str] = []  # List of BAM URLs to process
-    job_name: str = "streaming_bam_job"  # Name of the job to trigger
-    minimum_interval_seconds: int = 30  # Check every 30 seconds
-    chunk_size: int = 1000  # Chunk size for streaming
+    bam_urls: list[str] = []
+    job_name: str = "streaming_bam_job"
+    minimum_interval_seconds: int = 30
 
     def build_defs(self, context):
         @sensor(
@@ -77,11 +76,8 @@ class BamFileSensor(dagster.Model, dagster.Resolvable):
                 # Calculate total chunks for this BAM file
                 try:
                     stats = BamStats.from_url(bam_url)
-                    total_chunks = calculate_total_chunks(
-                        stats.total_reads, self.chunk_size
-                    )
                     context.log.info(
-                        f"📊 BAM file {bam_url}: {stats.total_reads:,} reads, {total_chunks} chunks"
+                        f"📊 BAM file {bam_url}: {stats.total_reads:,} reads"
                     )
                 except Exception as e:
                     context.log.error(f"❌ Failed to analyze BAM file {bam_url}: {e}")
@@ -92,7 +88,7 @@ class BamFileSensor(dagster.Model, dagster.Resolvable):
                 run_key = f"{url_id}_{int(time.time())}"
 
                 context.log.info(
-                    f"🎯 Triggering streaming job for: {bam_url} ({stats.total_reads:,} reads, {total_chunks} chunks)"
+                    f"🎯 Triggering streaming job for: {bam_url} ({stats.total_reads:,} reads)"
                 )
 
                 yield RunRequest(
@@ -105,7 +101,6 @@ class BamFileSensor(dagster.Model, dagster.Resolvable):
                     tags={
                         "url_id": url_id,
                         "bam_url": bam_url,
-                        "total_chunks": str(total_chunks),
                         "job_type": "streaming_bam_file",
                     },
                 )
