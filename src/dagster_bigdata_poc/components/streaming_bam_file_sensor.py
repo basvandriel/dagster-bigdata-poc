@@ -77,8 +77,12 @@ class BamFileSensor(dagster.Model, dagster.Resolvable):
                 # Calculate total chunks for this BAM file
                 try:
                     stats = BamStats.from_url(bam_url)
-                    total_chunks = calculate_total_chunks(stats.total_reads, self.chunk_size)
-                    context.log.info(f"📊 BAM file {bam_url}: {stats.total_reads:,} reads, {total_chunks} chunks")
+                    total_chunks = calculate_total_chunks(
+                        stats.total_reads, self.chunk_size
+                    )
+                    context.log.info(
+                        f"📊 BAM file {bam_url}: {stats.total_reads:,} reads, {total_chunks} chunks"
+                    )
                 except Exception as e:
                     context.log.error(f"❌ Failed to analyze BAM file {bam_url}: {e}")
                     continue
@@ -88,7 +92,9 @@ class BamFileSensor(dagster.Model, dagster.Resolvable):
                     # Use timestamp and chunk index to make run_key unique
                     run_key = f"{url_id}_chunk_{chunk_index}_{int(time.time())}"
 
-                    context.log.info(f"🎯 Triggering streaming job for: {bam_url} (chunk {chunk_index}/{total_chunks})")
+                    context.log.info(
+                        f"🎯 Triggering streaming job for: {bam_url} (chunk {chunk_index}/{total_chunks})"
+                    )
 
                     yield RunRequest(
                         run_key=run_key,

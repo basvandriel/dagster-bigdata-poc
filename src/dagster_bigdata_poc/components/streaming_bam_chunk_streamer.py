@@ -75,9 +75,7 @@ class StreamingBamChunkStreamer(dagster.Model, dagster.Resolvable):
             out=Out(BamChunk),
             description="Streams a specific BAM chunk without buffering in memory",
         )
-        def stream_bam_chunks_op(
-            context, bam_url: str, chunk_index: int
-        ) -> BamChunk:
+        def stream_bam_chunks_op(context, bam_url: str, chunk_index: int) -> BamChunk:
             """
             Op that streams BAM chunks using dynamic outputs.
 
@@ -102,7 +100,9 @@ class StreamingBamChunkStreamer(dagster.Model, dagster.Resolvable):
             stats = BamStats.from_url(bam_file_path)
             total_chunks = calculate_total_chunks(stats.total_reads, self.chunk_size)
 
-            context.log.info(f"🎯 Streaming chunk {chunk_index}/{total_chunks} from {bam_url}")
+            context.log.info(
+                f"🎯 Streaming chunk {chunk_index}/{total_chunks} from {bam_url}"
+            )
 
             chunk_count = 0
             target_chunk = None
@@ -127,16 +127,22 @@ class StreamingBamChunkStreamer(dagster.Model, dagster.Resolvable):
                             bam_url=bam_url,
                         )
 
-                        context.log.info(f"✅ Found chunk {chunk_count}: {len(serialized_reads)} reads")
+                        context.log.info(
+                            f"✅ Found chunk {chunk_count}: {len(serialized_reads)} reads"
+                        )
                         break  # Found the chunk, stop streaming
 
                     # If we've passed the target chunk, something went wrong
                     if chunk_count > chunk_index:
-                        context.log.error(f"❌ Chunk {chunk_index} not found, reached chunk {chunk_count}")
+                        context.log.error(
+                            f"❌ Chunk {chunk_index} not found, reached chunk {chunk_count}"
+                        )
                         break
 
                 if target_chunk is None:
-                    raise ValueError(f"❌ Requested chunk {chunk_index} but only found {chunk_count} chunks")
+                    raise ValueError(
+                        f"❌ Requested chunk {chunk_index} but only found {chunk_count} chunks"
+                    )
 
                 return target_chunk
 
